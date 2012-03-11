@@ -16,16 +16,15 @@ Options
 
 `-help` Display available options  
 `-o=<filename>` Specify output filename  
-`-version` Display the version of this program
+`-run` Run the program  
+`-S` Write output in LLVM intermediate language (instead of bitcode)  
+`-version` Display the version of this program  
 
 Examples
 --------
 
 Run a program:
-`llbf program.bf -o program.ll && lli program.ll`
+`llbf -run program.bf`
 
-Run a program that doesn't need input:
-`llbf program.bf | lli`
-
-Compile a program to a native executable:
-`llbf program.bf | llc -o program.s && clang program.s -o program`
+Compile a program to native assembly language (you can create an executable by running your usual compiler on the .s file):
+`llbf program.bf | llc -o program.s`

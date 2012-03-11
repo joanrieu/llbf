@@ -5,16 +5,26 @@
 #include <llvm/Module.h>
 #include <llvm/Support/IRBuilder.h>
 #include <llvm/Support/raw_os_ostream.h>
+#include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/Support/CommandLine.h>
+
+#ifdef LLBF_JIT
+
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/ExecutionEngine/JIT.h>
+
+#endif
 
 class Compiler {
 
         public:
 
         Compiler();
-        void Compile(std::istream& input);
+        void Compile(std::istream& input, bool terminate = true);
         void Compile(char c);
-        void TerminateAndOutput(std::ostream& output);
+        void Terminate();
+        void Output(std::ostream& output, bool bitcode) const;
+        void Run();
 
         private:
 
@@ -158,7 +168,7 @@ void Compiler::DefineMove(llvm::Function*& function, const llvm::Twine& name, bo
 void Compiler::PrepareMain() {
 
         // Declare the main function (which will be filled by the input).
-        builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "entry", llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), false), llvm::GlobalValue::ExternalLinkage, "main", &module)));
+        builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "entry", llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), false), llvm::GlobalValue::ExternalLinkage, "main", &module)));
 
         // Create the first cell.
         currentCell = builder.CreateCall2(allocCell, llvm::ConstantPointerNull::get(cellTy->getPointerTo()), llvm::ConstantPointerNull::get(cellTy->getPointerTo()), "currentCell");
@@ -166,11 +176,14 @@ void Compiler::PrepareMain() {
 
 }
 
-void Compiler::Compile(std::istream& input) {
+void Compiler::Compile(std::istream& input, bool terminate) {
 
         char c;
         while (input.get(c))
                 Compile(c);
+
+        if (terminate)
+                Terminate();
 
 }
 
@@ -292,19 +305,48 @@ void Compiler::LoopEnd() {
 
 }
 
-void Compiler::TerminateAndOutput(std::ostream& output) {
+void Compiler::Terminate() {
 
-        // Terminate the function and output the module.
-
-        builder.CreateRet(builder.getInt32(0));
-
-        llvm::raw_os_ostream out(output);
-        module.print(out, 0);
+        builder.CreateRetVoid();
 
 }
 
+void Compiler::Output(std::ostream& output, bool bitcode) const {
+
+        llvm::raw_os_ostream out(output);
+
+        if (bitcode)
+                llvm::WriteBitcodeToFile(&module, out);
+        else
+                module.print(out, 0);
+
+}
+
+#ifdef LLBF_JIT
+
+void Compiler::Run() {
+
+        llvm::InitializeNativeTarget();
+        llvm::ExecutionEngine* engine = llvm::EngineBuilder(&module).create();
+
+        if (not engine)
+                abort();
+
+        reinterpret_cast<void(*)()>(engine->getPointerToFunction(builder.GetInsertBlock()->getParent()))();
+
+}
+
+#endif
+
 llvm::cl::opt<std::string> InputFilename(llvm::cl::Positional, llvm::cl::desc("<input file>"), llvm::cl::init("-"));
 llvm::cl::opt<std::string> OutputFilename(llvm::cl::Prefix, "o", llvm::cl::desc("Specify output filename"), llvm::cl::value_desc("filename"), llvm::cl::init("-"));
+llvm::cl::opt<bool> humanReadable(llvm::cl::Optional, "S", llvm::cl::desc("Write output in LLVM intermediate language (instead of bitcode)"));
+
+#ifdef LLBF_JIT
+
+llvm::cl::opt<bool> RunProgram(llvm::cl::Optional, "run", llvm::cl::desc("Run the program"));
+
+#endif
 
 int main(int argc, char** argv) {
 
@@ -315,12 +357,27 @@ int main(int argc, char** argv) {
         if (InputFilename != "-") {
                 std::ifstream file(InputFilename.c_str());
                 cmp.Compile(file);
-        } else cmp.Compile(std::cin);
+        } else {
+                cmp.Compile(std::cin);
+        }
 
         if (OutputFilename != "-") {
-                std::ofstream file(OutputFilename.c_str());
-                cmp.TerminateAndOutput(file);
-        } else cmp.TerminateAndOutput(std::cout);
+                std::ofstream file(OutputFilename.c_str(), humanReadable ? std::ios_base::out : (std::ios_base::out | std::ios_base::binary));
+                cmp.Output(file, not humanReadable);
+#ifdef LLBF_JIT
+        } else if (not RunProgram) {
+#else
+        } else {
+#endif
+                cmp.Output(std::cout, not humanReadable);
+        }
+
+#ifdef LLBF_JIT
+
+        if (RunProgram)
+                cmp.Run();
+
+#endif
 
         return 0;
 
