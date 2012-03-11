@@ -1,5 +1,8 @@
+CXX=clang++
+CXXFLAGS=-O3
+
 llbf: llbf.cpp
-	clang++ -o $@ $^ -ggdb `llvm-config --cxxflags --ldflags --libs core`
+	$(CXX) -o $@ $^ $(CXXFLAGS) `llvm-config --cxxflags --ldflags --libs core`
 
 .PHONY: clean
 
