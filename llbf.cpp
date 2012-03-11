@@ -31,10 +31,6 @@ class Compiler {
         llvm::Module module;
         llvm::IRBuilder<> builder;
 
-        void DeclareStdio();
-        llvm::Function* getchar;
-        llvm::Function* putchar;
-
         void DefineCell();
         llvm::StructType* cellTy;
         llvm::Value* current;
@@ -64,22 +60,11 @@ class Compiler {
 
 Compiler::Compiler(): module("Brainfuck", llvm::getGlobalContext()), builder(module.getContext()) {
 
-        DeclareStdio();
         DefineCell();
         DefineIO();
         DefineAlloc();
         DefineMoves();
         PrepareMain();
-
-}
-
-void Compiler::DeclareStdio() {
-
-        // Three functions (getchar, putchar and malloc) from the C standard library are used.
-        module.addLibrary("c");
-
-        getchar = llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), false), llvm::GlobalValue::ExternalLinkage, "getchar", &module);
-        putchar = llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), builder.getInt8Ty(), false), llvm::GlobalValue::ExternalLinkage, "putchar", &module);
 
 }
 
@@ -98,12 +83,17 @@ void Compiler::DefineCell() {
 
 void Compiler::DefineIO() {
 
+        // Functions from the C standard library are used.
+        module.addLibrary("c");
+
         // Wrap getchar.
+        llvm::Function* getchar = llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), false), llvm::GlobalValue::ExternalLinkage, "getchar", &module);
         in = llvm::Function::Create(llvm::FunctionType::get(builder.getInt8Ty(), false), llvm::GlobalValue::InternalLinkage, "in", &module);
         builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "", in));
         builder.CreateRet(builder.CreateTruncOrBitCast(builder.CreateCall(getchar), builder.getInt8Ty()));
 
         // Wrap putchar.
+        llvm::Function* putchar = llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), builder.getInt8Ty(), false), llvm::GlobalValue::ExternalLinkage, "putchar", &module);
         out = llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), builder.getInt8Ty(), false), llvm::GlobalValue::InternalLinkage, "out", &module);
         builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "", out));
         builder.CreateCall(putchar, out->arg_begin());
