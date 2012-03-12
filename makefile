@@ -2,7 +2,7 @@
 
 JIT=yes
 CXX=clang++
-CXXFLAGS=-O3
+CXXFLAGS=-O4
 
 # END OF CONFIG
 
@@ -14,7 +14,7 @@ LLVMLIBS+= jit native
 endif
 
 llbf: llbf.cpp
-	$(CXX) -o $@ $^ $(CXXFLAGS) $(JITFLAG) `llvm-config --cxxflags --ldflags --libs $(LLVMLIBS)`
+	$(CXX) -o $@ $^ $(CXXFLAGS) `llvm-config --cxxflags --ldflags --libs $(LLVMLIBS)`
 
 .PHONY: clean
 
