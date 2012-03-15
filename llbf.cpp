@@ -1,17 +1,21 @@
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <stack>
+
 #include <llvm/LLVMContext.h>
 #include <llvm/Module.h>
-#include <llvm/Support/IRBuilder.h>
-#include <llvm/Support/raw_os_ostream.h>
+#include <llvm/PassManager.h>
 #include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/Support/CommandLine.h>
+#include <llvm/Support/IRBuilder.h>
+#include <llvm/Support/SystemUtils.h>
+#include <llvm/Support/ToolOutputFile.h>
+#include <llvm/Transforms/IPO.h>
 
 #ifdef LLBF_JIT
 
-#include <llvm/Support/TargetSelect.h>
 #include <llvm/ExecutionEngine/JIT.h>
+#include <llvm/Support/TargetSelect.h>
 
 #endif
 
@@ -20,11 +24,10 @@ class Compiler {
         public:
 
         Compiler();
-        void Compile(std::istream& input, bool terminate = true);
-        void Compile(char c);
-        void Terminate();
-        void Output(std::ostream& output, bool bitcode) const;
-        void Run();
+        void Compile(char c, std::string& error);
+        void Terminate(std::string& error);
+        bool Output(llvm::raw_ostream& stream, bool humanReadable, bool forceOutput = false) const;
+        void Run(std::string& error);
 
         private:
 
@@ -51,7 +54,7 @@ class Compiler {
         llvm::Function* moveBackward;
 
         void LoopBegin();
-        void LoopEnd();
+        void LoopEnd(std::string& error);
         std::stack<llvm::PHINode*> loopPHIs;
 
         void PrepareMain();
@@ -87,14 +90,22 @@ void Compiler::DefineIO() {
         module.addLibrary("c");
 
         // Wrap getchar.
+
         llvm::Function* getchar = llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), false), llvm::GlobalValue::ExternalLinkage, "getchar", &module);
+
         in = llvm::Function::Create(llvm::FunctionType::get(builder.getInt8Ty(), false), llvm::GlobalValue::InternalLinkage, "in", &module);
+        in->addFnAttr(llvm::Attribute::AlwaysInline);
+
         builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "", in));
         builder.CreateRet(builder.CreateTruncOrBitCast(builder.CreateCall(getchar), builder.getInt8Ty()));
 
         // Wrap putchar.
+
         llvm::Function* putchar = llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), builder.getInt8Ty(), false), llvm::GlobalValue::ExternalLinkage, "putchar", &module);
+
         out = llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), builder.getInt8Ty(), false), llvm::GlobalValue::InternalLinkage, "out", &module);
+        out->addFnAttr(llvm::Attribute::AlwaysInline);
+
         builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "", out));
         builder.CreateCall(putchar, out->arg_begin());
         builder.CreateRetVoid();
@@ -114,6 +125,7 @@ void Compiler::DefineAlloc() {
 
         llvm::Type* args[] = { cellTy->getPointerTo(), cellTy->getPointerTo() };
         allocCell = llvm::Function::Create(llvm::FunctionType::get(cellTy->getPointerTo(), args, false), llvm::GlobalValue::InternalLinkage, "allocCell", &module);
+        allocCell->addFnAttr(llvm::Attribute::AlwaysInline);
 
         builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "", allocCell));
         llvm::Value* cellPtr = builder.CreateCall(malloc, builder.CreatePtrToInt(builder.CreateGEP(llvm::ConstantPointerNull::get(cellTy->getPointerTo()), builder.getInt32(1)), sizeTy));
@@ -135,10 +147,11 @@ void Compiler::DefineMove(llvm::Function*& function, const llvm::Twine& name, bo
 
         // The function takes the current cell and returns the other one.
         function = llvm::Function::Create(llvm::FunctionType::get(cellTy->getPointerTo(), cellTy->getPointerTo(), false), llvm::GlobalValue::InternalLinkage, name, &module);
-        llvm::Value* origin = function->arg_begin();
+        function->setCallingConv(llvm::CallingConv::Fast);
 
         // Retrieve the pointer to the other cell.
         builder.SetInsertPoint(llvm::BasicBlock::Create(module.getContext(), "", function));
+        llvm::Value* origin = function->arg_begin();
         llvm::Value* oldPtrPtr = builder.CreateStructGEP(origin, forward ? 2 : 1);
         llvm::Value* oldPtr = builder.CreateLoad(oldPtrPtr);
         llvm::BranchInst* allocBr = builder.CreateCondBr(builder.CreateIsNotNull(oldPtr), llvm::BasicBlock::Create(module.getContext(), "existing", function), llvm::BasicBlock::Create(module.getContext(), "alloc", function));
@@ -166,18 +179,7 @@ void Compiler::PrepareMain() {
 
 }
 
-void Compiler::Compile(std::istream& input, bool terminate) {
-
-        char c;
-        while (input.get(c))
-                Compile(c);
-
-        if (terminate)
-                Terminate();
-
-}
-
-void Compiler::Compile(char c) {
+void Compiler::Compile(char c, std::string& error) {
 
         switch (c) {
 
@@ -210,7 +212,7 @@ void Compiler::Compile(char c) {
                 break;
 
                 case ']':
-                LoopEnd();
+                LoopEnd(error);
                 break;
 
                 default:
@@ -269,7 +271,12 @@ void Compiler::LoopBegin() {
 
 }
 
-void Compiler::LoopEnd() {
+void Compiler::LoopEnd(std::string& error) {
+
+        if (loopPHIs.empty()) {
+                error = "unexpected ']'";
+                return;
+        }
 
         /* Method:
          * Terminate the body by jumping to the head.
@@ -295,34 +302,55 @@ void Compiler::LoopEnd() {
 
 }
 
-void Compiler::Terminate() {
+void Compiler::Terminate(std::string& error) {
+
+        if (not loopPHIs.empty()) {
+                error = "expected ']' before EOF";
+                return;
+        }
 
         builder.CreateRetVoid();
 
+        llvm::PassManager pm;
+        pm.add(llvm::createAlwaysInlinerPass());
+        pm.run(module);
+
 }
 
-void Compiler::Output(std::ostream& output, bool bitcode) const {
+bool Compiler::Output(llvm::raw_ostream& stream, bool humanReadable, bool forceOutput) const {
 
-        llvm::raw_os_ostream out(output);
+        if (not humanReadable and not forceOutput and llvm::CheckBitcodeOutputToConsole(stream))
+                return false;
 
-        if (bitcode)
-                llvm::WriteBitcodeToFile(&module, out);
+        if (humanReadable)
+                module.print(stream, 0);
         else
-                module.print(out, 0);
+                llvm::WriteBitcodeToFile(&module, stream);
+
+        return true;
 
 }
 
 #ifdef LLBF_JIT
 
-void Compiler::Run() {
+void Compiler::Run(std::string& error) {
 
         llvm::InitializeNativeTarget();
         llvm::ExecutionEngine* engine = llvm::EngineBuilder(&module).create();
 
-        if (not engine)
-                abort();
+        if (not engine) {
+                error = "Error creating execution engine!";
+                return;
+        }
 
-        reinterpret_cast<void(*)()>(engine->getPointerToFunction(builder.GetInsertBlock()->getParent()))();
+        void* main = engine->getPointerToFunction(builder.GetInsertBlock()->getParent());
+
+        if (not main) {
+                error = "Error compiling to machine code!";
+                return;
+        }
+
+        reinterpret_cast<void(*)()>(main)();
 
 }
 
@@ -330,45 +358,101 @@ void Compiler::Run() {
 
 llvm::cl::opt<std::string> InputFilename(llvm::cl::Positional, llvm::cl::desc("<input file>"), llvm::cl::init("-"));
 llvm::cl::opt<std::string> OutputFilename(llvm::cl::Prefix, "o", llvm::cl::desc("Specify output filename"), llvm::cl::value_desc("filename"), llvm::cl::init("-"));
-llvm::cl::opt<bool> humanReadable(llvm::cl::Optional, "S", llvm::cl::desc("Write output in LLVM intermediate language (instead of bitcode)"));
+llvm::cl::opt<bool> HumanReadable(llvm::cl::Optional, "S", llvm::cl::desc("Write output in LLVM intermediate language (instead of bitcode)"));
+llvm::cl::opt<bool> ForceOutput(llvm::cl::Optional, "f", llvm::cl::desc("Enable binary output on terminals"));
 
 #ifdef LLBF_JIT
-
 llvm::cl::opt<bool> RunProgram(llvm::cl::Optional, "run", llvm::cl::desc("Run the program"));
-
 #endif
 
 int main(int argc, char** argv) {
 
+        enum Errors {
+                LLBF_ERROR_NONE = EXIT_SUCCESS,
+                LLBF_ERROR_IO,
+                LLBF_ERROR_SYNTAX,
+#ifdef LLBF_JIT
+                LLBF_ERROR_JIT
+#endif
+        };
+
+        std::string error;
+
         llvm::cl::ParseCommandLineOptions(argc, argv);
 
+        std::ifstream file;
+        const bool ReadStdin = InputFilename == "-";
+        const char* InputName = ReadStdin ? "<stdin>" : InputFilename.c_str();
+
+        if (not ReadStdin) {
+                file.open(InputFilename.c_str());
+                if (not file.is_open()) {
+                        std::cerr << "Error opening input file: " << InputFilename << std::endl;
+                        return LLBF_ERROR_IO;
+                }
+        };
+
         Compiler cmp;
+        std::istream& input = ReadStdin ? std::cin : file;
 
-        if (InputFilename != "-") {
-                std::ifstream file(InputFilename.c_str());
-                cmp.Compile(file);
-        } else {
-                cmp.Compile(std::cin);
+        unsigned ln = 1, cn = 0;
+        char c;
+        while (input.get(c)) {
+
+                if (c == '\n') {
+                        ++ln, cn = 0;
+                        continue;
+                }
+
+                ++cn;
+
+                cmp.Compile(c, error);
+
+                if (not error.empty()) {
+                        std::cerr << InputName << ':' << ln << ':' << cn << ": error: " << error << std::endl;
+                        return LLBF_ERROR_SYNTAX;
+                }
+
         }
 
-        if (OutputFilename != "-") {
-                std::ofstream file(OutputFilename.c_str(), humanReadable ? std::ios_base::out : (std::ios_base::out | std::ios_base::binary));
-                cmp.Output(file, not humanReadable);
-#ifdef LLBF_JIT
-        } else if (not RunProgram) {
-#else
-        } else {
-#endif
-                cmp.Output(std::cout, not humanReadable);
+        if (not input.eof()) {
+                std::cerr << "Error reading input file: " << InputName << std::endl;
+                return LLBF_ERROR_IO;
+        }
+
+        cmp.Terminate(error);
+
+        if (not error.empty()) {
+                std::cerr << InputName << ':' << ln << ':' << cn << ": error: " << error << std::endl;
+                return LLBF_ERROR_SYNTAX;
         }
 
 #ifdef LLBF_JIT
 
-        if (RunProgram)
-                cmp.Run();
+        if (RunProgram) {
+
+                cmp.Run(error);
+
+                if (error.empty())
+                        return LLBF_ERROR_NONE;
+
+                std::cerr << error << std::endl;
+                return LLBF_ERROR_JIT;
+
+        }
 
 #endif
 
-        return 0;
+        llvm::tool_output_file output(OutputFilename.c_str(), error, HumanReadable ? 0 : llvm::raw_fd_ostream::F_Binary);
+
+        if (not error.empty()) {
+                std::cerr << error << std::endl;
+                return LLBF_ERROR_IO;
+        }
+
+        if (cmp.Output(output.os(), HumanReadable, ForceOutput))
+                output.keep();
+
+        return LLBF_ERROR_NONE;
 
 }

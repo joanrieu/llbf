@@ -6,7 +6,7 @@ CXXFLAGS=-O4
 
 # END OF CONFIG
 
-LLVMLIBS=core bitwriter
+LLVMLIBS=core bitwriter ipo
 
 ifeq "$(JIT)"  "yes"
 CXXFLAGS+= -DLLBF_JIT
