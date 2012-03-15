@@ -1,8 +1,8 @@
 llbf
 ====
 
-Description
------------
+Overview
+--------
 
 `llbf` is a Brainfuck compiler with JIT support based on LLVM.
 
@@ -14,11 +14,11 @@ Usage
 Options
 -------
 
+`-S` Write output in LLVM intermediate language (instead of bitcode)  
+`-f` Enable binary output on terminals  
 `-help` Display available options  
 `-o <filename>` Specify output filename  
 `-run` Run the program  
-`-S` Write output in LLVM intermediate language (instead of bitcode)  
-`-f` Enable binary output on terminals  
 
 Examples
 --------

@@ -373,7 +373,13 @@ int main(int argc, char** argv) {
 
         std::string error;
 
-        llvm::cl::ParseCommandLineOptions(argc, argv);
+        llvm::cl::ParseCommandLineOptions(argc, argv,
+#ifdef LLBF_JIT
+                "Brainfuck compiler with JIT support based on LLVM\n"
+#else
+                "Brainfuck compiler based on LLVM\n"
+#endif
+        );
 
         std::ifstream file;
         const bool ReadStdin = InputFilename == "-";
