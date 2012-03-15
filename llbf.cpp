@@ -26,7 +26,7 @@ class Compiler {
         Compiler();
         void Compile(char c, std::string& error);
         void Terminate(std::string& error);
-        bool Output(llvm::raw_ostream& stream, bool humanReadable, bool forceOutput = false) const;
+        void Output(llvm::raw_ostream& stream, bool humanReadable) const;
         void Run(std::string& error);
 
         private:
@@ -317,17 +317,12 @@ void Compiler::Terminate(std::string& error) {
 
 }
 
-bool Compiler::Output(llvm::raw_ostream& stream, bool humanReadable, bool forceOutput) const {
-
-        if (not humanReadable and not forceOutput and llvm::CheckBitcodeOutputToConsole(stream))
-                return false;
+void Compiler::Output(llvm::raw_ostream& stream, bool humanReadable) const {
 
         if (humanReadable)
                 module.print(stream, 0);
         else
                 llvm::WriteBitcodeToFile(&module, stream);
-
-        return true;
 
 }
 
@@ -450,8 +445,11 @@ int main(int argc, char** argv) {
                 return LLBF_ERROR_IO;
         }
 
-        if (cmp.Output(output.os(), HumanReadable, ForceOutput))
-                output.keep();
+        if (not HumanReadable and not ForceOutput and llvm::CheckBitcodeOutputToConsole(output.os()))
+                return LLBF_ERROR_IO;
+
+        cmp.Output(output.os(), HumanReadable);
+        output.keep();
 
         return LLBF_ERROR_NONE;
 

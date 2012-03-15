@@ -18,6 +18,7 @@ Options
 `-o <filename>` Specify output filename  
 `-run` Run the program  
 `-S` Write output in LLVM intermediate language (instead of bitcode)  
+`-f` Enable binary output on terminals  
 
 Examples
 --------
