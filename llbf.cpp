@@ -80,7 +80,7 @@ void Compiler::DefineCell() {
          */
 
         cellTy = llvm::StructType::create(module.getContext(), "Cell");
-        cellTy->setBody(builder.getInt8Ty(), cellTy->getPointerTo(), cellTy->getPointerTo(), 0);
+        cellTy->setBody(builder.getInt8Ty(), cellTy->getPointerTo(), cellTy->getPointerTo(), NULL);
 
 }
 
